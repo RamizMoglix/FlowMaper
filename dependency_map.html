@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>🗺 Project Dependency Map</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+/* ── Reset & tokens ─────────────────────────────────────────────────────── */
+:root {
+  --bg:        #060a12;
+  --surface:   #0c1220;
+  --surface2:  #111927;
+  --surface3:  #172030;
+  --border:    #1c2d44;
+  --border2:   #263d59;
+  --text:      #d4e4f7;
+  --muted:     #4a6480;
+  --dim:       #263342;
+
+  --purple: #b57bff;  --purple-dk: #6d28d9;
+  --blue:   #5aafff;  --blue-dk:   #1d4ed8;
+  --cyan:   #22e5ee;  --cyan-dk:   #0891b2;
+  --green:  #4dffa0;  --green-dk:  #15803d;
+  --orange: #ff9a4d;  --orange-dk: #c2410c;
+  --pink:   #ff6eb4;  --pink-dk:   #be185d;
+  --yellow: #ffd84d;  --yellow-dk: #b45309;
+  --red:    #ff6b6b;  --red-dk:    #b91c1c;
+
+  /* layer palette */
+  --c-api:      #22e5ee;
+  --c-service:  #5aafff;
+  --c-util:     #4dffa0;
+  --c-model:    #ff9a4d;
+  --c-core:     #b57bff;
+  --c-router:   #ff6eb4;
+  --c-external: #607a96;
+  --c-other:    #8fa8c0;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100vw; height: 100vh; overflow: hidden; background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+/* ── Tab bar ─────────────────────────────────────────────────────────────── */
+#tabbar {
+  position: fixed; top: 0; left: 0; right: 0; height: 54px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: stretch; padding: 0 20px; gap: 2px;
+  z-index: 500;
+  box-shadow: 0 4px 24px rgba(0,0,0,.5);
+}
+.tab {
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 20px; font-size: 13px; font-weight: 600;
+  color: var(--muted); cursor: pointer; border: none;
+  background: transparent; border-bottom: 3px solid transparent;
+  transition: color .2s, border-color .2s; letter-spacing: .2px;
+  position: relative;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--purple); border-bottom-color: var(--purple); }
+.tab .tab-icon { font-size: 15px; }
+
+#brand {
+  margin-left: auto; display: flex; align-items: center; gap: 14px;
+  font-size: 13px; font-weight: 700; color: var(--purple);
+  letter-spacing: .6px;
+}
+.stat-chips { display: flex; gap: 6px; }
+.chip {
+  font-size: 10px; padding: 3px 10px; border-radius: 999px;
+  font-weight: 700; border: 1px solid; white-space: nowrap;
+}
+.chip-p { color: var(--purple); border-color: #b57bff44; background: #b57bff11; }
+.chip-b { color: var(--blue);   border-color: #5aafff44; background: #5aafff11; }
+.chip-g { color: var(--green);  border-color: #4dffa044; background: #4dffa011; }
+.chip-o { color: var(--orange); border-color: #ff9a4d44; background: #ff9a4d11; }
+
+/* ── Panels ─────────────────────────────────────────────────────────────── */
+.panel { position: fixed; top: 54px; left: 0; right: 0; bottom: 0; display: none; }
+.panel.active { display: block; }
+
+/* ══ GRAPH PANEL ════════════════════════════════════════════════════════════ */
+#graph-panel svg { width: 100%; height: 100%; }
+
+/* sidebar */
+#sidebar {
+  position: absolute; top: 14px; left: 14px;
+  display: flex; flex-direction: column; gap: 10px; z-index: 100;
+  pointer-events: none;
+}
+#sidebar > * { pointer-events: all; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px; padding: 14px 16px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 24px rgba(0,0,0,.4);
+}
+.card-title {
+  font-size: 10px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 10px;
+}
+
+.leg-row { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--text); margin-bottom: 7px; }
+.leg-row:last-child { margin-bottom: 0; }
+.ldot {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+  box-shadow: 0 0 8px currentColor;
+}
+.lline { width: 28px; height: 2px; flex-shrink: 0; border-radius: 2px; }
+
+.btn {
+  display: block; width: 100%;
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--muted); border-radius: 9px; padding: 8px 14px;
+  cursor: pointer; font-size: 11px; font-weight: 700;
+  transition: all .15s; text-align: center; letter-spacing: .3px;
+}
+.btn:hover { background: var(--surface3); color: var(--text); border-color: var(--border2); }
+.btn.on { background: #b57bff18; color: var(--purple); border-color: #b57bff55; }
+
+/* search */
+#search-box {
+  position: absolute; top: 14px; right: 14px; z-index: 100;
+}
+#search {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); border-radius: 10px; padding: 9px 16px 9px 38px;
+  font-size: 12px; outline: none; width: 240px; transition: all .2s;
+}
+#search:focus { border-color: var(--purple); box-shadow: 0 0 0 3px #b57bff22; }
+#search::placeholder { color: var(--muted); }
+#search-icon {
+  position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  font-size: 14px; pointer-events: none;
+}
+
+/* info pill */
+#infobar {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 999px; padding: 6px 18px; font-size: 11px;
+  color: var(--muted); z-index: 100; white-space: nowrap;
+  box-shadow: 0 2px 12px rgba(0,0,0,.4);
+}
+
+/* D3 elements */
+.g-node { cursor: pointer; }
+.g-node .ring    { transition: opacity .25s; }
+.g-node .halo    { transition: opacity .25s; }
+.g-node text     { pointer-events: none; user-select: none; }
+.g-node.dimmed   { opacity: .1; }
+.g-node.selected .main-circle { stroke-width: 3 !important; }
+
+.g-link { fill: none; transition: opacity .25s; }
+.g-link.dimmed   { opacity: .03; }
+
+/* ══ FLOW PANEL ═════════════════════════════════════════════════════════════ */
+#flow-panel { background: var(--bg); overflow: auto; }
+#flow-inner { padding: 36px 32px 60px; min-width: 900px; }
+
+/* swim-lane strip */
+.lane-strip {
+  position: relative; border-radius: 16px; margin-bottom: 10px;
+  border: 1px solid; padding: 18px 20px 18px 120px;
+  transition: background .2s;
+}
+.lane-label {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 108px;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 0 16px; border-right: 1px solid;
+  border-radius: 16px 0 0 16px;
+}
+.lane-label-text {
+  font-size: 10px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 1.4px; writing-mode: horizontal-tb;
+}
+.lane-label-count { font-size: 10px; margin-top: 4px; opacity: .6; }
+
+.lane-nodes { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* flow node card */
+.fn-card {
+  border-radius: 12px; border: 1px solid; padding: 10px 14px;
+  cursor: pointer; transition: all .2s; position: relative;
+  min-width: 160px; max-width: 220px; flex: 1;
+  background: var(--surface);
+}
+.fn-card:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(0,0,0,.5); }
+.fn-card .fn-name { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+.fn-card .fn-path { font-size: 9px; opacity: .55; font-family: monospace; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fn-syms { display: flex; flex-wrap: wrap; gap: 3px; }
+.fn-sym-tag {
+  font-size: 9px; padding: 1px 6px; border-radius: 4px;
+  font-weight: 700; white-space: nowrap;
+}
+
+/* arrow connector between lanes */
+.lane-connector {
+  display: flex; align-items: center; justify-content: center;
+  height: 40px; position: relative; margin: 0 60px;
+}
+.lane-connector::before {
+  content: ''; position: absolute;
+  left: 50%; top: 0; bottom: 0; width: 2px;
+  background: linear-gradient(to bottom, var(--border2), var(--border));
+}
+.lane-connector-arrow {
+  position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 7px solid transparent; border-right: 7px solid transparent;
+  border-top: 10px solid var(--border2);
+}
+.lane-connector-label {
+  font-size: 10px; color: var(--muted); background: var(--bg);
+  padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border);
+  z-index: 1;
+}
+
+/* ── Tooltip ─────────────────────────────────────────────────────────────── */
+#tt {
+  position: fixed; pointer-events: none;
+  background: var(--surface); border: 1px solid var(--border2);
+  border-radius: 14px; padding: 14px 16px; max-width: 340px;
+  z-index: 9999; display: none;
+  box-shadow: 0 16px 56px rgba(0,0,0,.75);
+}
+#tt h4 { font-size: 13px; font-weight: 800; margin-bottom: 3px; }
+#tt .tt-path { font-size: 10px; color: var(--muted); font-family: monospace; margin-bottom: 8px; }
+.tt-meta { display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+.tt-sym-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
+.tt-sym { display: flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); }
+.tt-sym-name { color: var(--text); flex: 1; }
+.badge {
+  font-size: 9px; padding: 1px 5px; border-radius: 4px;
+  font-weight: 800; text-transform: uppercase; flex-shrink: 0;
+}
+.b-cls   { background: #2d1f6e; color: var(--purple); }
+.b-fn    { background: #14432a; color: var(--green); }
+.b-async { background: #0c2a3d; color: var(--cyan); }
+.b-priv  { background: #2d1f0e; color: var(--yellow); }
+
+/* ── Particle animation keyframe ── */
+@keyframes dash-flow {
+  to { stroke-dashoffset: -20; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Tab bar ── -->
+<div id="tabbar">
+  <button class="tab active" onclick="switchTab('graph')" id="tab-graph">
+    <span class="tab-icon">🔗</span> Dependency Graph
+  </button>
+  <button class="tab" onclick="switchTab('flow')" id="tab-flow">
+    <span class="tab-icon">📊</span> Flow Chart
+  </button>
+  <div id="brand">
+    🗺 Project Map
+    <div class="stat-chips">
+      <span class="chip chip-p" id="c-files">—</span>
+      <span class="chip chip-b" id="c-edges">—</span>
+      <span class="chip chip-g" id="c-fns">—</span>
+      <span class="chip chip-o" id="c-cls">—</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Graph panel ══ -->
+<div id="graph-panel" class="panel active">
+  <svg id="gsvg"></svg>
+
+  <div id="sidebar">
+    <!-- Legend -->
+    <div class="card" style="min-width:174px">
+      <div class="card-title">Node Layer</div>
+      <div class="leg-row"><div class="ldot" style="color:var(--c-api);background:var(--c-api)"></div>API / Route</div>
+      <div class="leg-row"><div class="ldot" style="color:var(--c-service);background:var(--c-service)"></div>Service</div>
+      <div class="leg-row"><div class="ldot" style="color:var(--c-util);background:var(--c-util)"></div>Utility</div>
+      <div class="leg-row"><div class="ldot" style="color:var(--c-model);background:var(--c-model)"></div>Model</div>
+      <div class="leg-row"><div class="ldot" style="color:var(--c-core);background:var(--c-core)"></div>Core / Context</div>
+      <div class="leg-row"><div class="ldot" style="color:var(--c-external);background:var(--c-external)"></div>External lib</div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+        <div class="card-title">Edge Type</div>
+        <div class="leg-row"><div class="lline" style="background:var(--muted)"></div>Import</div>
+        <div class="leg-row">
+          <div class="lline" style="background: repeating-linear-gradient(90deg,var(--purple) 0,var(--purple) 5px,transparent 5px,transparent 9px)"></div>
+          Animated flow
+        </div>
+      </div>
+    </div>
+    <!-- Controls -->
+    <div class="card" style="display:flex;flex-direction:column;gap:6px">
+      <div class="card-title">Controls</div>
+      <button class="btn" id="btn-reset"    onclick="resetView()">⟳  Reset View</button>
+      <button class="btn" id="btn-ext"      onclick="toggleExt()">👁  External Libs</button>
+      <button class="btn" id="btn-isolated" onclick="toggleIsolated()">⬡  Isolated Nodes</button>
+      <button class="btn" id="btn-flow"     onclick="toggleParticles()">✨  Particles</button>
+    </div>
+  </div>
+
+  <div id="search-box">
+    <span id="search-icon">🔍</span>
+    <input id="search" placeholder="Search file, class, function…"/>
+  </div>
+
+  <div id="infobar">Hover to inspect &nbsp;·&nbsp; Click to highlight &nbsp;·&nbsp; Scroll to zoom &nbsp;·&nbsp; Drag to pan</div>
+</div>
+
+<!-- ══ Flow panel ══ -->
+<div id="flow-panel" class="panel">
+  <div id="flow-inner" id="flow-root"></div>
+</div>
+
+<div id="tt"></div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+// DATA
+// ════════════════════════════════════════════════════════════════════════════
+const RAW = {"__init__.py": {"imports": [], "symbols": [], "lines": 1}, "api/__init__.py": {"imports": [], "symbols": [], "lines": 1}, "api/routes.py": {"imports": [{"module": "asyncio", "name": "*"}, {"module": "tempfile", "name": "*"}, {"module": "pathlib", "name": "Path"}, {"module": "logging", "name": "*"}, {"module": "fastapi", "name": "APIRouter"}, {"module": "fastapi", "name": "UploadFile"}, {"module": "fastapi", "name": "File"}, {"module": "fastapi", "name": "Form"}, {"module": "fastapi", "name": "HTTPException"}, {"module": "datetime", "name": "datetime"}, {"module": "src.services.kafka_producer_service", "name": "KafkaProducerService"}, {"module": "src.services.extraction_service", "name": "InvoiceExtractionService"}, {"module": "src.models.request_models", "name": "SupplierInvoiceRequest"}, {"module": "src.models.request_models", "name": "SupplierInvoiceBatchRequest"}, {"module": "src.models.response_models", "name": "InvoiceExtractionResponse"}, {"module": "src.models.response_models", "name": "SupplierInvoiceAPIResponse"}, {"module": "src.models.response_models", "name": "SupplierInvoiceBatchAPIResponse"}, {"module": "src.handlers.supplier_invoice_handler", "name": "process_ticket_to_json"}, {"module": "os", "name": "*"}], "symbols": [{"kind": "function", "name": "extract_invoice", "is_async": true, "is_private": false}, {"kind": "function", "name": "health_check", "is_async": true, "is_private": false}, {"kind": "function", "name": "process_supplier_invoice", "is_async": true, "is_private": false}, {"kind": "function", "name": "process_supplier_invoice_file", "is_async": true, "is_private": false}, {"kind": "function", "name": "process_supplier_invoice_batch", "is_async": true, "is_private": false}], "lines": 464}, "config/__init__.py": {"imports": [], "symbols": [], "lines": 1}, "config/config.py": {"imports": [{"module": "os", "name": "*"}, {"module": "dataclasses", "name": "dataclass"}, {"module": "typing", "name": "Dict"}, {"module": "typing", "name": "Optional"}, {"module": "dotenv", "name": "load_dotenv"}, {"module": "urllib.parse", "name": "quote_plus"}], "symbols": [{"kind": "class", "name": "GeminiCredentials", "methods": [{"name": "to_dict", "is_async": false, "is_private": false}]}, {"kind": "class", "name": "MongoDBConfig", "methods": [{"name": "get_connection_string", "is_async": false, "is_private": false}]}, {"kind": "class", "name": "Config", "methods": [{"name": "__init__", "is_async": false, "is_private": true}, {"name": "validate", "is_async": false, "is_private": false}, {"name": "get_credentials_dict", "is_async": false, "is_private": false}, {"name": "get_project_id", "is_async": false, "is_private": false}]}], "lines": 142}, "config/database_config.py": {"imports": [{"module": "os", "name": "*"}, {"module": "dataclasses", "name": "dataclass"}, {"module": "dotenv", "name": "load_dotenv"}], "symbols": [{"kind": "class", "name": "MySQLDatabaseConfig", "methods": [{"name": "__post_init__", "is_async": false, "is_private": true}]}, {"kind": "class", "name": "DatabaseConfigManager", "methods": [{"name": "get_mysql_config", "is_async": false, "is_private": false}]}], "lines": 41}, "config/qr_settings.py": {"imports": [], "symbols": [{"kind": "class", "name": "Config", "methods": []}], "lines": 21}, "constants/__init__.py": {"imports": [], "symbols": [], "lines": 1}, "constants/sql_constants.py": {"imports": [], "symbols": [], "lines": 81}, "context/context_holders.py": {"imports": [{"module": "contextvars", "name": "ContextVar"}, {"module": "typing", "name": "Optional"}, {"module": "typing", "name": "Dict"}, {"module": "typing", "name": "Any"}], "symbols": [{"kind": "class", "name": "RequestContext", "methods": [{"name": "set", "is_async": false, "is_private": false}, {"name": "get_request_id", "is_async": false, "is_private": false}, {"name": "get_request_body", "is_async": false, "is_private": false}, {"name": "get_request_po_number", "is_async": false, "is_private": false}, {"name": "clear", "is_async": false, "is_private": false}]}], "lines": 58}, "core/batch_processor.py": {"imports": [{"module": "os", "name": "*"}, {"module": "json", "name": "*"}, {"module": "src.core.file_processor", "name": "FileProcessor"}, {"module": "src.config.qr_settings", "name": "Config"}], "symbols": [{"kind": "class", "name": "BatchProcessor", "methods": [{"name": "__init__", "is_async": false, "is_private": true}, {"name": "process_folder", "is_async": false, "is_private": false}, {"name": "_export_batch", "is_async": false, "is_private": true}]}], "lines": 103}, "core/decoder.py": {"imports": [{"module": "cv2", "name": "*"}, {"module": "numpy", "name": "*"}, {"module": "src.utils.qr_gst_decoder", "name": "GSTDecoder"}, {"module": "src.config.qr_settings", "name": "Config"}, {"module": "pyzbar", "name": "pyzbar"}, {"module": "pyzbar", "name": "pyzbar"}], "symbols": [{"kind": "class", "name": "UltimateQRDecoder", "methods": [{"name": "__init__", "is_async": false, "is_private": true}, {"name": "_check_pyzbar", "is_async": false, "is_private": true}, {"name": "decode_full_page", "is_async": false, "is_private": false}, {"name": "_attempt_direct", "is_async": false, "is_private": true}, {"name": "_attempt_binarization", "is_async": false, "is_private": true}, {"name": "_attempt_extreme", "is_async": false, "is_private": true}, {"name": "_decode_with_both", "is_async": false, "is_private": true}, {"name": "_decode_opencv", "is_async": false, "is_private": true}, {"name": "_decode_pyzbar", "is_async": false, "is_private": true}, {"name": "_sharpen", "is_async": false, "is_private": true}]}], "lines": 282}, "core/file_processor.py": {"imports": [{"module": "os", "name": "*"}, {"module": "gc", "name": "*"}, {"module": "cv2", "name": "*"}, {"module": "fitz", "name": "*"}, {"module": "numpy", "name": "*"}, {"module": "json", "name": "*"}, {"module": "io", "name": "*"}, {"module": "src.core.decoder", "name": "UltimateQRDecoder"}, {"module": "src.config.qr_settings", "name": "Config"}], "symbols": [{"kind": "class", "name": "FileProcessor", "methods": [{"name": "__init__", "is_async": false, "is_private": true}, {"name": "process_bytes", "is_async": false, "is_private": false}, {"name": "_process_pdf_bytes", "is_async": false, "is_private": true}, {"name": "_process_image_bytes", "is_async": false, "is_private": true}, {"name": "process", "is_async": false, "is_private": false}, {"name": "_process_pdf", "is_async": false, "is_private": true}, {"name": "_process_image", "is_async": false, "is_private": true}, {"name": "_print_result", "is_async": false, "is_private": true}, {"name": "_export_json", "is_async": false, "is_private": true}]}], "lines": 245}, "database/__init__.py": {"imports": [], "symbols": [], "lines": 1}, "database/mongo_client.py": {"imports": [{"module": "asyncio", "name": "*"}, {"module": "logging", "name": "*"}, {"module": "typing", "name": "Dict"}, {"module": "typing", "name": "Any"}, {"module": "typing", "name": "Optional"}, {"module": "datetime", "name": "datetime"}, {"module": "motor.motor_asyncio", "name": "AsyncIOMotorClient"}, {"module": "pymongo.errors", "name": "ConnectionFailure"}, {"module": "pymongo.errors", "name": "ServerSelectionTimeoutError"}, {"module": "src.config.config", "name": "config"}], "symbols": [{"kind": "class", "name": "MongoDBClient", "methods": [{"name": "__new__", "is_async": false, "is_private": true}, {"name": "get_instance", "is_async": false, "is_private": false}, {"name": "__init__", "is_async": false, "is_private": true}, {"name": "_get_client", "is_async": false, "is_private": true}, {"name": "database", "is_async": false, "is_private": false}, {"name": "collection", "is_async": false, "is_private": false}, {"name": "insert_one_async", "is_async": true, "is_private": false}, {"name": "insert_background", "is_async": false, "is_private": false}, {"name": "_safe_insert", "is_async": true, "is_private": true}, {"name": "health_check", "is_async": true, "is_private": false}, {"name": "close", "is_async": true, "is_private": false}]}, {"kind": "function", "name": "get_mongo_client", "is_async": false, "is_private": false}], "lines": 157}, "database/mysql_client.py": {"imports": [{"module": "asyncio", "name": "*"}, {"module": "concurrent.futures", "name": "ThreadPoolExecutor"}, {"module": "typing", "name": "List"}, {"module": "typing", "name": "Dict"}, {"module": "typing", "name": "Any"}, {"module": "typing", "name": "Optional"}, {"module": "typing", "name": "Tuple"}, {"module": "dataclasses", "name": "dataclass"}, {"module": "mysql.connector", "name": "Error"}, {"module": "mysql.connector", "name": "pooling"}, {"module": "mysql.connector.pooling", "name": "MySQLConnectionPool"}, {"module": "contextlib", "name": "contextmanager"}], "symbols": [{"kind": "class", "name": "MySQLConfig", "methods": []}, {"kind": "class", "name": "MySQLConnectionManager", "methods": [{"name": "__new__", "is_async": false, "is_private": true}, {"name": "initialize_pool", "is_async": false, "is_private": false}, {"name": "get_connection", "is_async": false, "is_private": false}]}, {"kind": "class", "name": "AsyncMySQLClient", "methods": [{"name": "__init__", "is_async": false, "is_private": true}, {"name": "initialize", "is_async": true, "is_private": false}, {"name": "execute_query", "is_async": true, "is_private": false}, {"name": "_execute_query_sync", "is_async": false, "is_private": true}, {"name": "execute_many", "is_async": true, "is_private": false}, {"name": "execute_batch_insert", "is_async": true, "is_private": false}, {"name": "_execute_batch_sync", "is_async": false, "is_private": true}, {"name": "health_check", "is_async": true, "is_private": false}, {"name": "close", "is_async": true, "is_private": false}, {"name": "__aenter__", "is_async": true, "is_private": true}, {"name": "__aexit__", "is_async": true, "is_private": true}]}], "lines": 204}, "database/query_builder.py": {"imports": [{"module": "typing", "name": "List"}, {"module": "typing", "name": "Union"}, {"module": "src.constants.sql_constants", "name": "SINGLE_PO_QUERY"}, {"module": "src.constants.sql_constants", "name": "BATCH_PO_QUERY_TEMPLATE"}], "symbols": [{"kind": "class", "name": "POQueryBuilder", "methods": [{"name": "build_po_data_query", "is_async": false, "is_private": false}, {"name": "build_batch_po_query", "is_async": false, "is_private": false}, {"name": "build_po_detail_query", "is_async": false, "is_private": false}]}], "lines": 46}, "extensions/gemini_result_merger.py": {"imports": [{"module": "logging", "name": "*"}], "symbols": [{"kind": "function", "name": "merge_gemini_results", "is_async": false, "is_private": false}], "lines": 119}, "extensions/pdf_spliter.py": {"imports": [{"module": "hashlib", "name": "*"}, {"module": "io", "name": "*"}, {"module": "logging", "name": "*"}, {"module": "re", "name": "*"}, {"module": "dataclasses", "name": "dataclass"}, {"module": "pypdf", "name": "PdfReader"}, {"module": "pypdf", "name": "PdfWriter"}], "symbols": [{"kind": "class", "name": "PDFAnalysis", "methods": []}, {"kind": "function", "name": "_extract_text", "is_async": false, "is_private": true}, {"kind": "function", "name": "_fingerprint", "is_async": false, "is_private": true}, {"kind": "function", "name": "_serialise_page", "is_async": false, "is_private": true}, {"kind": "function", "name": "analyze_pdf", "is_async": false, "is_private": false}, {"kind": "function", "name": "split_pdf_to_unique_pages", "is_async": false, "is_private": false}], "lines": 181}, "extensions/qr_extension.py": {"imports": [{"module": "logging", "name": "*"}, {"module": "src.models.response_models", "name": "QRLoggingDataModel"}, {"module": "src.utils.gstin_utils", "name": "fix_gstin_checksum"}], "symbols": [{"kind": "function", "name": "parse_qr_results", "is_async": false, "is_private": false}, {"kind": "function", "name": "reconcile_extracted_data", "is_async": false, "is_private": false}], "lines": 127}, "handlers/__init__.py": {"imports": [], "symbols": [], "lines": 1}, "handlers/supplier_invoice_handler.py": {"imports": [{"module": "os", "name": "*"}, {"module": "asyncio", "name": "*"}, {"module": "concurrent.futures", "name": "*"}, {"module": "datetime", "name": "datetime"}, {"module": "pathlib", "name": "Path"}, {"module": "typing", "name": "Optional"}, {"module": "typing", "name": "Dict"}, {"module": "typing", "name": "Union"}, {"module": "google.genai", "name": "types"}, {"module": "dotenv", "name": "load_dotenv"}, {"module": "src.services.compliance_validation_service", "name": "ComplianceValidator"}, {"module": "src.services.supplier_invoice_extraction_service", "name": "InvoiceComplianceChecker"}, {"module": "src.services.fs_ticket_service", "name": "get_freshservice_ticket"}, {"module": "src.services.po_data_service", "name": "PODataService"}, {"module": "src.utils.miscellaneous_utils", "name": "download_attachment_fast"}, {"module": "src.utils.miscellaneous_utils", "name": "save_response_to_file"}, {"module": "mimetypes", "name": "*"}, {"module": "src.utils.miscellaneous_utils", "name": "clean_csv_response"}, {"module": "src.utils.miscellaneous_utils", "name": "csv_to_json_for_supplier_invoice"}, {"module": "traceback", "name": "*"}], "symbols": [{"kind": "function", "name": "process_ticket_to_json", "is_async": false, "is_private": false}, {"kind": "function", "name": "_extract_po_number", "is_async": false, "is_private": true}, {"kind": "function", "name": "_fetch_po_data_sync", "is_async": true, "is_private": true}, {"kind": "function", "name": "_transform_po_to_reference_data", "is_async": false, "is_private": true}, {"kind": "function", "name": "_compare_with_db_values", "is_async": false, "is_private": true}, {"kind": "function", "name": "_detect_mime_type_from_file", "is_async": false, "is_private": true}, {"kind": "function", "name": "_is_supported_mime_type", "is_async": false, "is_private": true}, {"kind": "function", "name": "_add_confidence_scores", "is_async": false, "is_private": true}], "lines": 818}, "helpers/__init__.py": {"imports": [], "symbols": [], "lines": 1}, "helpers/normalization_helpers.py": {"imports": [{"module": "re", "name": "*"}, {"module": "datetime", "name": "datetime"}, {"module": "typing", "name": "List"}, {"module": "typing", "name": "Any"}], "symbols": [{"kind": "class", "name": "NormalizationHelpers", "methods": [{"name": "normalize_invoice_number", "is_async": false, "is_private": false}, {"name": "normalize_string", "is_async": false, "is_private": false}, {"name": "normalize_gstin", "is_async": false, "is_private": false}, {"name": "normalize_date", "is_async": false, "is_private": false}, {"name": "normalize_tax_type", "is_async": false, "is_private": false}, {"name": "normalize_array", "is_async": false, "is_private": false}]}], "lines": 89}, "main.py": {"imports": [{"module": "fastapi", "name": "FastAPI"}, {"module": "fastapi.middleware.cors", "name": "CORSMiddleware"}, {"module": "fastapi.responses", "name": "JSONResponse"}, {"module": "src.api.routes", "name": "router"}, {"module": "src.config.config", "name": "config"}, {"module": "src.utils.logging_middleware", "name": "RequestLoggingMiddleware"}, {"module": "uvicorn", "name": "*"}], "symbols": [{"kind": "function", "name": "global_exception_handler", "is_async": true, "is_private": false}, {"kind": "function", "name": "root", "is_async": true, "is_private": false}], "lines": 65}, "models/__init__.py": {"imports": [], "symbols": [], "lines": 1}, "models/gemini_response_model.py": {"imports": [], "symbols": [], "lines": 157}, "models/request_models.py": {"imports": [{"module": "re", "name": "*"}, {"module": "typing", "name": "Optional"}, {"module": "typing", "name": "List"}, {"module": "pydantic", "name": "BaseModel"}, {"module": "pydantic", "name": "Field"}, {"module": "pydantic", "name": "field_validator"}], "symbols": [{"kind": "class", "name": "InvoiceExtractionRequest", "methods": []}, {"kind": "class", "name": "SupplierInvoiceRequest", "methods": [{"name": "validate_ticket_id", "is_async": false, "is_private": false}]}, {"kind": "class", "name": "SupplierInvoiceBatchRequest", "methods": [{"name": "validate_ticket_ids", "is_async": false, "is_private": false}]}], "lines": 80}, "models/response_models.py": {"imports": [{"module": "typing", "name": "Optional"}, {"module": "typing", "name": "Dict"}, {"module": "typing", "name": "List"}, {"module": "pydantic", "name": "BaseModel"}, {"module": "pydantic", "name": "Field"}], "symbols": [{"kind": "class", "name": "QRLoggingDataModel", "methods": []}, {"kind": "class", "name": "ItemLevelInfo", "methods": []}, {"kind": "class", "name": "ItemLevelReturnJson", "methods": []}, {"kind": "class", "name": "OtherCharge", "methods": []}, {"kind": "class", "name": "AdditionalCharges", "methods": []}, {"kind": "class", "name": "EwayBillDetails", "methods": []}, {"kind": "class", "name": "TransportDetails", "methods": []}, {"kind": "class", "name": "InvoiceData", "methods": []}, {"kind": "class", "name": "CostInfo", "methods": []}, {"kind": "class", "name": "InvoiceExtractionResponse", "methods": []}, {"kind": "class", "name": "ErrorResponse", "methods": []}, {"kind": "class", "name": "SupplierInvoiceResponse", "methods": []}, {"kind": "class", "name": "SupplierInvoiceBatchResult", "methods": []}, {"kind": "class", "name": "SupplierInvoiceBatchResponse", "methods": []}, {"kind": "class", "name": "SupplierInvoiceAPIResponse", "methods": []}, {"kind": "class", "name": "SupplierInvoiceBatchAPIResponse", "methods": []}], "lines": 150}, "prompts/__init__.py": {"imports": [], "symbols": [], "lines": 1}, "prompts/invoice_prompt.py": {"imports": [], "symbols": [], "lines": 233}, "prompts/item_extraction_prompt.py": {"imports": [], "symbols": [], "lines": 180}, "prompts/supplier_invoice_prompt.py": {"imports": [], "symbols": [], "lines": 112}, "services/__init__.py": {"imports": [], "symbols": [], "lines": 1}, "services/compliance_validation_service.py": {"imports": [{"module": "src.services.supplier_invoice_extraction_service", "name": "InvoiceComplianceChecker"}, {"module": "src.helpers.normalization_helpers", "name": "NormalizationHelpers"}, {"module": "traceback", "name": "*"}], "symbols": [{"kind": "class", "name": "ComplianceValidator", "methods": [{"name": "__init__", "is_async": false, "is_private": true}, {"name": "validate_invoice_with_reference", "is_async": false, "is_private": false}, {"name": "_compare_and_update_flags", "is_async": false, "is_private": true}, {"name": "_generate_comparison_summary", "is_async": false, "is_private": true}]}], "lines": 450}, "services/database_executor_services.py": {"imports": [{"module": "logging", "name": "*"}, {"module": "typing", "name": "List"}, {"module": "typing", "name": "Dict"}, {"module": "typing", "name": "Any"}, {"module": "typing", "name": "Optional"}, {"module": "src.database.mysql_client", "name": "MySQLConfig"}, {"module": "src.database.mysql_client", "name": "AsyncMySQLClient"}, {"module": "src.database.query_builder", "name": "POQueryBuilder"}, {"module": "src.config.database_config", "name": "DatabaseConfigManager"}, {"module": "src.utils.json_normalizer", "name": "POJsonFormatter"}], "symbols": [{"kind": "class", "name": "PORepository", "methods": [{"name": "__init__", "is_async": false, "is_private": true}, {"name": "get_po_details", "is_async": true, "is_private": false}]}], "lines": 53}, "services/extraction_service.py": {"imports": [{"module": "asyncio", "name": "*"}, {"module": "logging", "name": "*"}, {"module": "fastapi", "name": "UploadFile"}, {"module": "src.services.gemini_service", "name": "GeminiService"}, {"module": "src.services.validation_service", "name": "ValidationService"}, {"module": "src.services.database_executor_services", "name": "PORepository"}, {"module": "src.core.file_processor", "name": "FileProcessor"}, {"module": "src.context.context_holders", "name": "RequestContext"}, {"module": "src.models.response_models", "name": "InvoiceExtractionResponse"}, {"module": "src.models.response_models", "name": "ItemLevelReturnJson"}, {"module": "src.utils.file_utils", "name": "FileHandler"}, {"module": "src.utils.cost_calculator", "name": "CostCalculator"}, {"module": "src.extensions.pdf_spliter", "name": "analyze_pdf"}, {"module": "src.extensions.pdf_spliter", "name": "split_pdf_to_unique_pages"}, {"module": "src.extensions.gemini_result_merger", "name": "merge_gemini_results"}, {"module": "src.extensions.qr_extension", "name": "parse_qr_results"}, {"module": "src.extensions.qr_extension", "name": "reconcile_extracted_data"}, {"module": "src.utils.item_response_mapper", "name": "map_item_extraction_to_response"}], "symbols": [{"kind": "class", "name": "InvoiceExtractionService", "methods": [{"name": "__init__", "is_async": false, "is_private": true}, {"name": "process_invoice", "is_async": true, "is_private": false}, {"name": "_process", "is_async": true, "is_private": true}, {"name": "_build_error_response", "is_async": false, "is_private": true}]}], "lines": 288}, "services/fs_ticket_service.py": {"imports": [{"module": "requests", "name": "*"}, {"module": "json", "name": "*"}], "symbols": [{"kind": "function", "name": "get_freshservice_ticket", "is_async": false, "is_private": false}], "lines": 42}, "services/gemini_service.py": {"imports": [{"module": "json", "name": "*"}, {"module": "asyncio", "name": "*"}, {"module": "datetime", "name": "datetime"}, {"module": "google", "name": "genai"}, {"module": "google.genai", "name": "types"}, {"module": "google.oauth2", "name": "service_account"}, {"module": "src.config.config", "name": "config"}, {"module": "src.prompts.invoice_prompt", "name": "INVOICE_PROMPT"}, {"module": "src.prompts.item_extraction_prompt", "name": "ITEM_EXTRACTION_PROMPT"}, {"module": "src.models.gemini_response_model", "name": "response_schema"}, {"module": "src.models.gemini_response_model", "name": "item_response_schema"}, {"module": "src.utils.json_cleaner", "name": "safe_json_loads"}], "symbols": [{"kind": "class", "name": "GeminiService", "methods": [{"name": "__init__", "is_async": false, "is_private": true}, {"name": "_parse_with_repair", "is_async": false, "is_private": true}, {"name": "_sync_extract_invoice_data", "is_async": false, "is_private": true}, {"name": "_sync_extract_invoice_items", "is_async": false, "is_private": true}, {"name": "extract_invoice_data", "is_async": true, "is_private": false}, {"name": "extract_invoice_items", "is_async": true, "is_private": false}, {"name": "_build_extraction_prompt", "is_async": false, "is_private": true}, {"name": "_build_item_extraction_prompt", "is_async": false, "is_private": true}]}], "lines": 224}, "services/kafka_producer_service.py": {"imports": [{"module": "os", "name": "*"}, {"module": "json", "name": "*"}, {"module": "logging", "name": "*"}, {"module": "typing", "name": "Dict"}, {"module": "typing", "name": "Any"}, {"module": "typing", "name": "Optional"}, {"module": "typing", "name": "Callable"}, {"module": "typing", "name": "List"}, {"module": "datetime", "name": "datetime"}, {"module": "confluent_kafka", "name": "Producer"}, {"module": "threading", "name": "Lock"}], "symbols": [{"kind": "class", "name": "KafkaProducerService", "methods": [{"name": "__new__", "is_async": false, "is_private": true}, {"name": "__init__", "is_async": false, "is_private": true}, {"name": "_connect", "is_async": false, "is_private": true}, {"name": "get_instance", "is_async": false, "is_private": false}, {"name": "send_message", "is_async": false, "is_private": false}, {"name": "send_batch", "is_async": false, "is_private": false}, {"name": "send_invoice_validation_result", "is_async": false, "is_private": false}, {"name": "send_batch_validation_results", "is_async": false, "is_private": false}, {"name": "flush", "is_async": false, "is_private": false}, {"name": "_default_delivery_callback", "is_async": false, "is_private": true}, {"name": "get_stats", "is_async": false, "is_private": false}, {"name": "reset_stats", "is_async": false, "is_private": false}, {"name": "close", "is_async": false, "is_private": false}, {"name": "__enter__", "is_async": false, "is_private": true}, {"name": "__exit__", "is_async": false, "is_private": true}]}, {"kind": "function", "name": "send_to_kafka", "is_async": false, "is_private": false}, {"kind": "function", "name": "send_invoice_result_to_kafka", "is_async": false, "is_private": false}], "lines": 320}, "services/po_data_service.py": {"imports": [{"module": "asyncio", "name": "*"}, {"module": "typing", "name": "List"}, {"module": "typing", "name": "Dict"}, {"module": "typing", "name": "Any"}, {"module": "typing", "name": "Union"}, {"module": "src.database.mysql_client", "name": "AsyncMySQLClient"}, {"module": "src.database.mysql_client", "name": "MySQLConfig"}, {"module": "src.database.query_builder", "name": "POQueryBuilder"}, {"module": "src.config.database_config", "name": "DatabaseConfigManager"}, {"module": "collections", "name": "defaultdict"}], "symbols": [{"kind": "class", "name": "PODataService", "methods": [{"name": "__init__", "is_async": false, "is_private": true}, {"name": "initialize", "is_async": true, "is_private": false}, {"name": "fetch_po_data", "is_async": true, "is_private": false}, {"name": "fetch_multiple_pos_parallel", "is_async": true, "is_private": false}, {"name": "fetch_multiple_pos_batch", "is_async": true, "is_private": false}, {"name": "_transform_po_data", "is_async": false, "is_private": true}, {"name": "_group_rows_by_po", "is_async": false, "is_private": true}, {"name": "close", "is_async": true, "is_private": false}, {"name": "__aenter__", "is_async": true, "is_private": true}, {"name": "__aexit__", "is_async": true, "is_private": true}]}], "lines": 144}, "services/request_logger_service.py": {"imports": [{"module": "asyncio", "name": "*"}, {"module": "logging", "name": "*"}, {"module": "uuid", "name": "*"}, {"module": "datetime", "name": "datetime"}, {"module": "typing", "name": "Dict"}, {"module": "typing", "name": "Any"}, {"module": "typing", "name": "Optional"}, {"module": "src.database.mongo_client", "name": "get_mongo_client"}], "symbols": [{"kind": "class", "name": "RequestLoggerService", "methods": [{"name": "__new__", "is_async": false, "is_private": true}, {"name": "get_instance", "is_async": false, "is_private": false}, {"name": "__init__", "is_async": false, "is_private": true}, {"name": "log_request_response", "is_async": false, "is_private": false}, {"name": "log_request_response_async", "is_async": true, "is_private": false}, {"name": "_sanitize_body", "is_async": false, "is_private": true}, {"name": "_sanitize_headers", "is_async": false, "is_private": true}, {"name": "generate_request_id", "is_async": false, "is_private": false}]}, {"kind": "function", "name": "get_request_logger", "is_async": false, "is_private": false}], "lines": 200}, "services/supplier_invoice_extraction_service.py": {"imports": [{"module": "math", "name": "*"}, {"module": "typing", "name": "Dict"}, {"module": "typing", "name": "List"}, {"module": "google", "name": "genai"}, {"module": "google.genai", "name": "types"}, {"module": "google.oauth2", "name": "service_account"}, {"module": "src.config.config", "name": "config"}, {"module": "src.prompts.supplier_invoice_prompt", "name": "SUPPLIER_INVOICE_PROMPT"}, {"module": "src.utils.miscellaneous_utils", "name": "csv_to_json_for_supplier_invoice"}, {"module": "src.utils.miscellaneous_utils", "name": "clean_csv_response"}, {"module": "traceback", "name": "*"}], "symbols": [{"kind": "class", "name": "InvoiceComplianceChecker", "methods": [{"name": "__init__", "is_async": false, "is_private": true}, {"name": "check_compliance_with_context", "is_async": false, "is_private": false}, {"name": "_calculate_field_confidence", "is_async": false, "is_private": true}, {"name": "_get_value_confidence", "is_async": false, "is_private": true}, {"name": "_build_compliance_prompt_with_context", "is_async": false, "is_private": true}]}], "lines": 279}, "services/validation_service.py": {"imports": [{"module": "src.utils.date_normalizer", "name": "normalize_date"}, {"module": "src.models.response_models", "name": "InvoiceData"}, {"module": "src.models.response_models", "name": "AdditionalCharges"}, {"module": "src.models.response_models", "name": "OtherCharge"}, {"module": "src.models.response_models", "name": "EwayBillDetails"}, {"module": "src.models.response_models", "name": "TransportDetails"}, {"module": "src.utils.gstin_utils", "name": "GSTINValidator"}], "symbols": [{"kind": "class", "name": "ValidationService", "methods": [{"name": "validate_e_invoice", "is_async": false, "is_private": false}, {"name": "validate_gstin_match", "is_async": false, "is_private": false}, {"name": "normalize_invoice_data", "is_async": false, "is_private": false}]}], "lines": 97}, "utils/__init__.py": {"imports": [], "symbols": [], "lines": 1}, "utils/cost_calculator.py": {"imports": [{"module": "src.config.config", "name": "config"}], "symbols": [{"kind": "class", "name": "CostCalculator", "methods": [{"name": "calculate_cost", "is_async": false, "is_private": false}, {"name": "format_cost_summary", "is_async": false, "is_private": false}]}], "lines": 40}, "utils/date_normalizer.py": {"imports": [{"module": "datetime", "name": "datetime"}], "symbols": [{"kind": "function", "name": "normalize_date", "is_async": false, "is_private": false}], "lines": 52}, "utils/file_utils.py": {"imports": [{"module": "pathlib", "name": "*"}, {"module": "fastapi", "name": "UploadFile"}, {"module": "src.config.config", "name": "config"}], "symbols": [{"kind": "class", "name": "FileHandler", "methods": [{"name": "get_mime_type", "is_async": false, "is_private": false}, {"name": "validate_file", "is_async": true, "is_private": false}, {"name": "read_file_bytes", "is_async": true, "is_private": false}]}], "lines": 135}, "utils/gstin_utils.py": {"imports": [{"module": "re", "name": "*"}], "symbols": [{"kind": "function", "name": "calculate_gstin_checksum", "is_async": false, "is_private": false}, {"kind": "function", "name": "fix_gstin_checksum", "is_async": false, "is_private": false}, {"kind": "class", "name": "GSTINValidator", "methods": [{"name": "extract_state_code", "is_async": false, "is_private": false}, {"name": "compare_gstins", "is_async": false, "is_private": false}]}], "lines": 178}, "utils/item_response_mapper.py": {"imports": [{"module": "logging", "name": "*"}, {"module": "pint", "name": "*"}, {"module": "src.models.response_models", "name": "ItemLevelReturnJson"}, {"module": "src.models.response_models", "name": "ItemLevelInfo"}], "symbols": [{"kind": "function", "name": "_resolve_unit", "is_async": false, "is_private": true}, {"kind": "function", "name": "_get_conversion_factor", "is_async": false, "is_private": true}, {"kind": "function", "name": "_convert_unit_price", "is_async": false, "is_private": true}, {"kind": "function", "name": "_convert_qty", "is_async": false, "is_private": true}, {"kind": "function", "name": "_prices_are_same", "is_async": false, "is_private": true}, {"kind": "function", "name": "map_item_extraction_to_response", "is_async": false, "is_private": false}], "lines": 275}, "utils/json_cleaner.py": {"imports": [{"module": "json", "name": "*"}, {"module": "re", "name": "*"}, {"module": "unicodedata", "name": "*"}, {"module": "logging", "name": "*"}], "symbols": [{"kind": "function", "name": "_replace_known_chars", "is_async": false, "is_private": true}, {"kind": "function", "name": "_normalize_unicode", "is_async": false, "is_private": true}, {"kind": "function", "name": "_strip_control_chars", "is_async": false, "is_private": true}, {"kind": "function", "name": "_strip_json_fences", "is_async": false, "is_private": true}, {"kind": "function", "name": "_fix_trailing_commas", "is_async": false, "is_private": true}, {"kind": "function", "name": "_fix_unquoted_nan_inf", "is_async": false, "is_private": true}, {"kind": "function", "name": "_log_replaced_chars", "is_async": false, "is_private": true}, {"kind": "function", "name": "clean_json_string", "is_async": false, "is_private": false}, {"kind": "function", "name": "safe_json_loads", "is_async": false, "is_private": false}], "lines": 189}, "utils/json_normalizer.py": {"imports": [{"module": "typing", "name": "List"}, {"module": "typing", "name": "Dict"}, {"module": "typing", "name": "Any"}], "symbols": [{"kind": "class", "name": "POJsonFormatter", "methods": [{"name": "format_po_details", "is_async": false, "is_private": false}]}], "lines": 31}, "utils/logging_middleware.py": {"imports": [{"module": "time", "name": "*"}, {"module": "json", "name": "*"}, {"module": "logging", "name": "*"}, {"module": "typing", "name": "Callable"}, {"module": "fastapi", "name": "requests"}, {"module": "starlette.middleware.base", "name": "BaseHTTPMiddleware"}, {"module": "starlette.requests", "name": "Request"}, {"module": "starlette.datastructures", "name": "UploadFile"}, {"module": "starlette.datastructures", "name": "FormData"}, {"module": "starlette.responses", "name": "Response"}, {"module": "starlette.concurrency", "name": "iterate_in_threadpool"}, {"module": "src.context.context_holders", "name": "RequestContext"}, {"module": "src.services.request_logger_service", "name": "get_request_logger"}, {"module": "src.services.request_logger_service", "name": "RequestLoggerService"}], "symbols": [{"kind": "class", "name": "RequestLoggingMiddleware", "methods": [{"name": "__init__", "is_async": false, "is_private": true}, {"name": "logger_service", "is_async": false, "is_private": false}, {"name": "dispatch", "is_async": true, "is_private": false}, {"name": "_should_skip", "is_async": false, "is_private": true}, {"name": "_make_request_rereadable", "is_async": true, "is_private": true}, {"name": "_get_request_body", "is_async": true, "is_private": true}, {"name": "_get_response_body", "is_async": true, "is_private": true}, {"name": "_get_client_ip", "is_async": false, "is_private": true}]}], "lines": 275}, "utils/miscellaneous_utils.py": {"imports": [{"module": "re", "name": "*"}, {"module": "requests", "name": "*"}, {"module": "pathlib", "name": "Path"}, {"module": "typing", "name": "Union"}, {"module": "typing", "name": "Dict"}, {"module": "urllib.parse", "name": "urlparse"}, {"module": "urllib.parse", "name": "unquote"}, {"module": "mimetypes", "name": "*"}, {"module": "json", "name": "*"}, {"module": "datetime", "name": "datetime"}, {"module": "pathlib", "name": "Path"}, {"module": "csv", "name": "*"}, {"module": "io", "name": "StringIO"}], "symbols": [{"kind": "function", "name": "download_attachment_fast", "is_async": false, "is_private": false}, {"kind": "function", "name": "_parse_cookies", "is_async": false, "is_private": true}, {"kind": "function", "name": "_detect_mime_type", "is_async": false, "is_private": true}, {"kind": "function", "name": "save_response_to_file", "is_async": false, "is_private": false}, {"kind": "function", "name": "clean_json_response", "is_async": false, "is_private": false}, {"kind": "function", "name": "clean_csv_response", "is_async": false, "is_private": false}, {"kind": "function", "name": "csv_to_json_for_supplier_invoice", "is_async": false, "is_private": false}], "lines": 306}, "utils/qr_gst_decoder.py": {"imports": [{"module": "jwt", "name": "*"}, {"module": "json", "name": "*"}], "symbols": [{"kind": "class", "name": "GSTDecoder", "methods": [{"name": "is_gst_jwt", "is_async": false, "is_private": false}, {"name": "decode_jwt", "is_async": false, "is_private": false}, {"name": "parse_qr_data", "is_async": false, "is_private": false}]}], "lines": 44}};
+
+const STDLIB = new Set([
+  'os','sys','io','re','json','asyncio','logging','hashlib','dataclasses',
+  'typing','abc','copy','math','pathlib','datetime','collections','functools',
+  'itertools','contextlib','enum','time','uuid','base64','urllib','http',
+  'typing_extensions','inspect','warnings','traceback','threading','struct',
+  'pickle','csv','xml','html','subprocess','shutil','tempfile','glob',
+  'random','string','textwrap','pprint','weakref','gc','operator','heapq',
+  'bisect','array','queue','socket','ssl','hmac','secrets','platform',
+]);
+
+// ── Layer classification ──────────────────────────────────────────────────
+function layerOf(p) {
+  if (/\/(api|router|routes?|endpoint)/.test(p))         return 'api';
+  if (/\/services?\//.test(p))                           return 'service';
+  if (/\/utils?\//.test(p))                              return 'util';
+  if (/\/(models?|schemas?|entities)\//.test(p))         return 'model';
+  if (/\/(core|context|config|settings|middleware)\//.test(p)) return 'core';
+  if (/\/(routers?|views?)\//.test(p))                   return 'router';
+  return 'other';
+}
+
+const LAYER_COLOR = {
+  api:      '#22e5ee',
+  service:  '#5aafff',
+  util:     '#4dffa0',
+  model:    '#ff9a4d',
+  core:     '#b57bff',
+  router:   '#ff6eb4',
+  external: '#607a96',
+  other:    '#8fa8c0',
+};
+const LAYER_BG = {
+  api:      '#22e5ee14',
+  service:  '#5aafff14',
+  util:     '#4dffa014',
+  model:    '#ff9a4d14',
+  core:     '#b57bff14',
+  router:   '#ff6eb414',
+  external: '#607a9614',
+  other:    '#8fa8c014',
+};
+const LAYER_LABEL = {
+  api:'API / Routes', service:'Services', util:'Utilities',
+  model:'Models', core:'Core / Context', router:'Routers',
+  external:'External', other:'Other',
+};
+const LAYER_ORDER = ['api','service','util','model','core','router','other'];
+
+function shortName(p) { return p.split('/').pop().replace('.py',''); }
+
+// ── Resolve module string → file key ─────────────────────────────────────
+function resolveModule(mod, keys) {
+  const parts = mod.split('.');
+  for (let i = parts.length; i > 0; i--) {
+    const c = parts.slice(0,i).join('/') + '.py';
+    const found = keys.find(k => k === c || k.endsWith('/'+c));
+    if (found) return found;
+  }
+  return null;
+}
+
+// ── Build nodes ──────────────────────────────────────────────────────────
+const fileKeys = Object.keys(RAW);
+const nodeMap  = {};
+
+const internalNodes = fileKeys.map(k => {
+  const n = {
+    id: k, label: shortName(k), layer: layerOf(k),
+    color: LAYER_COLOR[layerOf(k)], bg: LAYER_BG[layerOf(k)],
+    data: RAW[k], isExternal: false,
+  };
+  nodeMap[k] = n;
+  return n;
+});
+
+const extMap = {}, extNodes = [];
+fileKeys.forEach(k => {
+  RAW[k].imports.forEach(imp => {
+    if (resolveModule(imp.module, fileKeys)) return;
+    const top = imp.module.split('.')[0];
+    if (STDLIB.has(top) || extMap[top]) return;
+    const en = {
+      id:'__ext__'+top, label:top, layer:'external',
+      color:LAYER_COLOR.external, bg:LAYER_BG.external,
+      isExternal:true, data:{imports:[],symbols:[],lines:0},
+    };
+    extMap[top] = en; extNodes.push(en); nodeMap['__ext__'+top] = en;
+  });
+});
+const allNodes = [...internalNodes, ...extNodes];
+
+// ── Build edges ──────────────────────────────────────────────────────────
+const edges = [];
+const edgeSet = new Set();
+fileKeys.forEach(src => {
+  RAW[src].imports.forEach(imp => {
+    const dst = resolveModule(imp.module, fileKeys);
+    const top = imp.module.split('.')[0];
+    const target = dst || (extMap[top] ? '__ext__'+top : null);
+    if (!target || target === src) return;
+    const key = src+'→'+target;
+    if (edgeSet.has(key)) return;
+    edgeSet.add(key);
+    edges.push({source:src, target, type:'import', label:imp.name});
+  });
+});
+
+// ── Stats ─────────────────────────────────────────────────────────────────
+let totalFn=0, totalCls=0;
+fileKeys.forEach(k => {
+  RAW[k].symbols.forEach(s => { s.kind==='class' ? totalCls++ : totalFn++; });
+});
+document.getElementById('c-files').textContent = fileKeys.length + ' files';
+document.getElementById('c-edges').textContent = edges.length   + ' imports';
+document.getElementById('c-fns').textContent   = totalFn        + ' functions';
+document.getElementById('c-cls').textContent   = totalCls       + ' classes';
+
+// ════════════════════════════════════════════════════════════════════════════
+// GRAPH VIEW
+// ════════════════════════════════════════════════════════════════════════════
+const gsvg   = d3.select('#gsvg');
+const GW = () => window.innerWidth;
+const GH = () => window.innerHeight - 54;
+
+// ── SVG defs ──────────────────────────────────────────────────────────────
+const defs = gsvg.append('defs');
+
+// Arrow markers
+function addArrow(id, color) {
+  defs.append('marker').attr('id', id)
+    .attr('viewBox','0 -5 10 10').attr('refX',20).attr('refY',0)
+    .attr('markerWidth',7).attr('markerHeight',7).attr('orient','auto')
+    .append('path').attr('d','M0,-5L10,0L0,5').attr('fill', color);
+}
+addArrow('arr-dim',  '#263342');
+addArrow('arr-norm', '#4a6480');
+addArrow('arr-hi',   '#b57bff');
+
+// Glow filter per layer
+Object.entries(LAYER_COLOR).forEach(([layer, color]) => {
+  const f = defs.append('filter')
+    .attr('id','glow-'+layer)
+    .attr('x','-80%').attr('y','-80%').attr('width','260%').attr('height','260%');
+  f.append('feGaussianBlur').attr('in','SourceGraphic').attr('stdDeviation','5').attr('result','blur');
+  const m = f.append('feMerge');
+  m.append('feMergeNode').attr('in','blur');
+  m.append('feMergeNode').attr('in','blur');
+  m.append('feMergeNode').attr('in','SourceGraphic');
+});
+
+// Radial gradients per layer for node fill
+Object.entries(LAYER_COLOR).forEach(([layer, color]) => {
+  const rg = defs.append('radialGradient')
+    .attr('id','rg-'+layer).attr('cx','38%').attr('cy','32%').attr('r','65%');
+  rg.append('stop').attr('offset','0%').attr('stop-color',color).attr('stop-opacity',.45);
+  rg.append('stop').attr('offset','100%').attr('stop-color',color).attr('stop-opacity',.06);
+});
+
+// Starfield background
+const stars = gsvg.append('g').attr('class','stars');
+for (let i=0; i<120; i++) {
+  const sz = Math.random() < .1 ? 2 : 1;
+  stars.append('circle')
+    .attr('cx', Math.random()*3000-500).attr('cy', Math.random()*2000-300)
+    .attr('r', sz).attr('fill','#ffffff').attr('opacity', .04 + Math.random()*.12);
+}
+
+const gg = gsvg.append('g');
+
+const zoom = d3.zoom().scaleExtent([.06, 6])
+  .on('zoom', e => gg.attr('transform', e.transform));
+gsvg.call(zoom);
+
+// ── State ─────────────────────────────────────────────────────────────────
+let showExt = true, showIsolated = true, showParticles = true;
+let linkSel, nodeSel, particleSel, selected = null;
+let animFrame = null;
+
+function getVN() {
+  return allNodes.filter(n => {
+    if (!showExt && n.isExternal) return false;
+    if (!showIsolated) {
+      const c = edges.some(e =>
+        (e.source.id||e.source)===n.id || (e.target.id||e.target)===n.id);
+      if (!c) return false;
+    }
+    return true;
+  });
+}
+function getVE(vn) {
+  const ids = new Set(vn.map(n=>n.id));
+  return edges.filter(e => {
+    const s=e.source.id||e.source, t=e.target.id||e.target;
+    return ids.has(s) && ids.has(t);
+  });
+}
+
+// ── Force simulation ──────────────────────────────────────────────────────
+const sim = d3.forceSimulation()
+  .force('link',      d3.forceLink().id(d=>d.id).distance(d =>
+    (d.source.isExternal||d.target.isExternal) ? 90 : 165).strength(.4))
+  .force('charge',    d3.forceManyBody().strength(d => d.isExternal ? -160 : -600))
+  .force('center',    d3.forceCenter())
+  .force('collision', d3.forceCollide().radius(d => d.isExternal ? 28 : 52));
+
+// ── Particle system ───────────────────────────────────────────────────────
+const particleData = [];
+
+function spawnParticles(vEdges) {
+  particleData.length = 0;
+  vEdges.forEach((e, i) => {
+    // one particle per edge, staggered offsets
+    particleData.push({ edge: e, t: (i * 0.17) % 1, speed: 0.003 + Math.random()*0.003 });
+  });
+}
+
+function animateParticles() {
+  if (!showParticles || !particleSel) { animFrame = requestAnimationFrame(animateParticles); return; }
+  particleData.forEach(p => {
+    p.t = (p.t + p.speed) % 1;
+    const s = p.edge.source, t = p.edge.target;
+    if (!s.x || !t.x) return;
+    const x = s.x + (t.x - s.x) * p.t;
+    const y = s.y + (t.y - s.y) * p.t;
+    const srcNode = nodeMap[s.id||s];
+    if (p.el) {
+      p.el.attr('cx', x).attr('cy', y)
+        .attr('opacity', 0.9 - Math.abs(p.t - .5));
+    }
+  });
+  animFrame = requestAnimationFrame(animateParticles);
+}
+
+// ── Render ────────────────────────────────────────────────────────────────
+function render() {
+  if (animFrame) cancelAnimationFrame(animFrame);
+  gg.selectAll('.g-link').remove();
+  gg.selectAll('.g-node').remove();
+  gg.selectAll('.g-particle').remove();
+
+  const vNodes = getVN();
+  const vEdges = getVE(vNodes);
+
+  sim.force('center', d3.forceCenter(GW()/2, GH()/2));
+
+  // ── Links ──
+  linkSel = gg.append('g').attr('class','links-layer').selectAll('.g-link')
+    .data(vEdges).enter().append('line')
+    .attr('class','g-link')
+    .attr('stroke', d => {
+      const src = nodeMap[d.source.id||d.source];
+      return src ? src.color + '55' : '#4a648055';
+    })
+    .attr('stroke-width', 1.6)
+    .attr('marker-end','url(#arr-norm)');
+
+  // ── Nodes ──
+  nodeSel = gg.append('g').attr('class','nodes-layer').selectAll('.g-node')
+    .data(vNodes, d=>d.id).enter().append('g')
+    .attr('class','g-node')
+    .call(d3.drag()
+      .on('start',(e,d)=>{ if(!e.active) sim.alphaTarget(.3).restart(); d.fx=d.x; d.fy=d.y; })
+      .on('drag', (e,d)=>{ d.fx=e.x; d.fy=e.y; })
+      .on('end',  (e,d)=>{ if(!e.active) sim.alphaTarget(0); d.fx=null; d.fy=null; }))
+    .on('click',      nodeClick)
+    .on('mouseenter', nodeEnter)
+    .on('mouseleave', nodeLeave);
+
+  const R = d => d.isExternal ? 20 : 34;
+
+  // outer ambient glow ring
+  nodeSel.append('circle')
+    .attr('class','halo')
+    .attr('r', d => R(d) + 14)
+    .attr('fill', d => d.color + '0c')
+    .attr('filter', d => 'url(#glow-'+d.layer+')')
+    .style('pointer-events','none');
+
+  // pulsing ring
+  nodeSel.filter(d=>!d.isExternal).append('circle')
+    .attr('class','ring')
+    .attr('r', d => R(d) + 6)
+    .attr('fill','none')
+    .attr('stroke', d => d.color + '33')
+    .attr('stroke-width', 1.5)
+    .style('pointer-events','none');
+
+  // main filled circle
+  nodeSel.append('circle')
+    .attr('class','main-circle')
+    .attr('r', R)
+    .attr('fill', d => `url(#rg-${d.layer})`)
+    .attr('stroke', d => d.color)
+    .attr('stroke-width', d => d.isExternal ? 1.5 : 2.2);
+
+  // icon based on layer
+  const LAYER_ICON = { api:'⚡', service:'⚙', util:'🔧', model:'📦', core:'🧩', router:'🔀', external:'📎', other:'📄' };
+  nodeSel.filter(d=>!d.isExternal).append('text')
+    .attr('text-anchor','middle').attr('dy','-.9em').attr('font-size',10)
+    .text(d => LAYER_ICON[d.layer]||'📄');
+
+  // file label
+  nodeSel.append('text')
+    .attr('text-anchor','middle')
+    .attr('dy', d => d.isExternal ? '.35em' : '.4em')
+    .attr('font-size', d => d.isExternal ? 9 : 11)
+    .attr('font-weight','800')
+    .attr('fill', d => d.color)
+    .attr('filter', d => 'url(#glow-'+d.layer+')')
+    .text(d => d.label.length>13 ? d.label.slice(0,11)+'…' : d.label);
+
+  // symbol count
+  nodeSel.filter(d=>!d.isExternal && d.data.symbols.length>0).append('text')
+    .attr('text-anchor','middle').attr('dy','1.6em')
+    .attr('font-size',8.5).attr('fill', d => d.color+'88')
+    .text(d => d.data.symbols.length + ' sym');
+
+  // ── Particles ──
+  particleSel = gg.append('g').attr('class','particles-layer');
+  spawnParticles(vEdges);
+  particleData.forEach(p => {
+    const src = nodeMap[p.edge.source.id||p.edge.source];
+    const col = src ? src.color : '#b57bff';
+    p.el = particleSel.append('circle')
+      .attr('class','g-particle')
+      .attr('r', 3).attr('fill', col)
+      .attr('filter','url(#glow-'+((src&&src.layer)||'external')+')')
+      .style('pointer-events','none');
+  });
+
+  sim.nodes(vNodes).on('tick', () => {
+    linkSel
+      .attr('x1',d=>d.source.x).attr('y1',d=>d.source.y)
+      .attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+    nodeSel.attr('transform',d=>`translate(${d.x},${d.y})`);
+  });
+  sim.force('link').links(vEdges);
+  sim.alpha(.9).restart();
+
+  animateParticles();
+}
+
+render();
+
+// ── Node interactions ──────────────────────────────────────────────────────
+function nodeClick(e, d) {
+  e.stopPropagation();
+  if (selected===d.id) { clearSel(); return; }
+  selected = d.id;
+  const conn = new Set([d.id]);
+  const connE = new Set();
+  linkSel.each(function(le) {
+    const s=le.source.id||le.source, t=le.target.id||le.target;
+    if (s===d.id||t===d.id) { conn.add(s); conn.add(t); connE.add(le); }
+  });
+  nodeSel
+    .classed('selected', nd => nd.id===d.id)
+    .classed('dimmed',   nd => !conn.has(nd.id));
+  linkSel
+    .classed('dimmed', le => !connE.has(le))
+    .attr('stroke', le => connE.has(le) ? '#b57bffcc' : null)
+    .attr('stroke-width', le => connE.has(le) ? 2.5 : null)
+    .attr('marker-end', le => connE.has(le) ? 'url(#arr-hi)' : 'url(#arr-norm)');
+}
+
+function clearSel() {
+  selected = null;
+  if (!nodeSel) return;
+  nodeSel.classed('selected',false).classed('dimmed',false);
+  linkSel.classed('dimmed',false)
+    .attr('stroke', d => { const s=nodeMap[d.source.id||d.source]; return s?s.color+'55':'#4a648055'; })
+    .attr('stroke-width', 1.6)
+    .attr('marker-end','url(#arr-norm)');
+}
+
+gsvg.on('click', () => { clearSel(); hideTT(); });
+
+function nodeEnter(e, d) { showTT(e, d); }
+function nodeLeave()     { hideTT(); }
+gsvg.on('mousemove', e => { if(document.getElementById('tt').style.display!=='none') moveTT(e); });
+
+// ── Tooltip ────────────────────────────────────────────────────────────────
+function showTT(e, d) {
+  const tt   = document.getElementById('tt');
+  const syms = d.data.symbols||[];
+  const inC  = edges.filter(ed=>(ed.target.id||ed.target)===d.id).length;
+  const outC = edges.filter(ed=>(ed.source.id||ed.source)===d.id).length;
+
+  const rows = syms.map(s => {
+    if (s.kind==='class') {
+      const mths = (s.methods||[]).map(m => `
+        <div class="tt-sym" style="padding-left:22px">
+          <span class="tt-sym-name" style="color:var(--muted)">↳ ${m.name}</span>
+          ${m.is_async?'<span class="badge b-async">async</span>':''}
+          ${m.is_private?'<span class="badge b-priv">priv</span>':''}
+        </div>`).join('');
+      return `<div class="tt-sym"><span class="badge b-cls">class</span><span class="tt-sym-name">${s.name}</span></div>${mths}`;
+    }
+    return `<div class="tt-sym">
+      <span class="badge ${s.is_async?'b-async':'b-fn'}">${s.is_async?'async':'fn'}</span>
+      <span class="tt-sym-name">${s.name}</span>
+      ${s.is_private?'<span class="badge b-priv">priv</span>':''}
+    </div>`;
+  }).join('');
+
+  tt.innerHTML = `
+    <h4 style="color:${d.color}">${d.label}</h4>
+    <div class="tt-path">${d.id}</div>
+    <div class="tt-meta">
+      <span>⬅ ${inC} imported by</span>
+      <span>➡ ${outC} imports</span>
+      ${d.data.lines?`<span>📄 ${d.data.lines} lines</span>`:''}
+    </div>
+    ${syms.length
+      ? '<div class="tt-sym-list">'+rows+'</div>'
+      : '<div style="font-size:11px;color:var(--muted)">No symbols</div>'}`;
+  tt.style.display = 'block';
+  moveTT(e);
+}
+function moveTT(e) {
+  const tt = document.getElementById('tt');
+  let x=e.clientX+18, y=e.clientY-12;
+  if (x+350>window.innerWidth)  x=e.clientX-360;
+  if (y+tt.offsetHeight>window.innerHeight) y=window.innerHeight-tt.offsetHeight-12;
+  tt.style.left=x+'px'; tt.style.top=y+'px';
+}
+function hideTT() { document.getElementById('tt').style.display='none'; }
+
+// ── Graph controls ─────────────────────────────────────────────────────────
+function resetView() {
+  gsvg.transition().duration(700)
+    .call(zoom.transform, d3.zoomIdentity.translate(GW()/2, GH()/2).scale(.85).translate(-GW()/2,-GH()/2));
+}
+function toggleExt() {
+  showExt = !showExt;
+  document.getElementById('btn-ext').classList.toggle('on', !showExt);
+  document.getElementById('btn-ext').textContent = showExt ? '👁  External Libs' : '🚫  External Libs';
+  clearSel(); render();
+}
+function toggleIsolated() {
+  showIsolated = !showIsolated;
+  document.getElementById('btn-isolated').classList.toggle('on', !showIsolated);
+  document.getElementById('btn-isolated').textContent = showIsolated ? '⬡  Isolated Nodes' : '⬡  Connected Only';
+  clearSel(); render();
+}
+function toggleParticles() {
+  showParticles = !showParticles;
+  document.getElementById('btn-flow').classList.toggle('on', !showParticles);
+  document.getElementById('btn-flow').textContent = showParticles ? '✨  Particles' : '○  Particles Off';
+  if (particleSel) particleSel.style('display', showParticles ? null : 'none');
+}
+
+// ── Search ─────────────────────────────────────────────────────────────────
+document.getElementById('search').oninput = function() {
+  const q = this.value.toLowerCase().trim();
+  if (!q) { clearSel(); return; }
+  const hit = new Set();
+  allNodes.forEach(n => {
+    if (n.label.toLowerCase().includes(q)) hit.add(n.id);
+    (n.data.symbols||[]).forEach(s => {
+      if (s.name.toLowerCase().includes(q)) hit.add(n.id);
+      (s.methods||[]).forEach(m => { if(m.name.toLowerCase().includes(q)) hit.add(n.id); });
+    });
+  });
+  if (nodeSel) nodeSel.classed('selected', d=>hit.has(d.id)).classed('dimmed', d=>!hit.has(d.id));
+  if (linkSel) linkSel.classed('dimmed', true);
+};
+
+window.onresize = () => {
+  sim.force('center', d3.forceCenter(GW()/2, GH()/2)).alpha(.3).restart();
+};
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// FLOW CHART VIEW
+// ════════════════════════════════════════════════════════════════════════════
+let flowBuilt = false;
+
+function buildFlowchart() {
+  const root = document.getElementById('flow-inner');
+  root.innerHTML = '';
+
+  // Group files by layer
+  const groups = {};
+  LAYER_ORDER.forEach(l => groups[l] = []);
+  fileKeys.forEach(k => {
+    const l = layerOf(k);
+    (groups[l] || (groups.other = groups.other||[])).push(k);
+  });
+
+  // Only render layers that have files
+  const activeLayers = LAYER_ORDER.filter(l => groups[l] && groups[l].length > 0);
+
+  activeLayers.forEach((layer, li) => {
+    const files = groups[layer];
+    const col   = LAYER_COLOR[layer];
+
+    // lane strip
+    const strip = document.createElement('div');
+    strip.className = 'lane-strip';
+    strip.style.cssText = `background:${col}08;border-color:${col}28;`;
+
+    // swim-lane label on left
+    const lbl = document.createElement('div');
+    lbl.className = 'lane-label';
+    lbl.style.cssText = `border-color:${col}28;`;
+    lbl.innerHTML = `
+      <div class="lane-label-text" style="color:${col}">${LAYER_LABEL[layer]||layer}</div>
+      <div class="lane-label-count" style="color:${col}">${files.length} file${files.length>1?'s':''}</div>`;
+    strip.appendChild(lbl);
+
+    // node cards container
+    const nodesWrap = document.createElement('div');
+    nodesWrap.className = 'lane-nodes';
+
+    files.forEach(k => {
+      const d = RAW[k];
+      const syms = d.symbols || [];
+      const classes = syms.filter(s=>s.kind==='class');
+      const fns     = syms.filter(s=>s.kind==='function');
+      const asyncFns = fns.filter(s=>s.is_async);
+
+      const card = document.createElement('div');
+      card.className = 'fn-card';
+      card.style.cssText = `border-color:${col}44;`;
+      card.onmouseenter = e => showFlowTT(e, k, d, col);
+      card.onmouseleave = () => hideTT();
+      card.onmousemove  = e => moveTT(e);
+
+      // Imports-from indicator
+      const importsFrom = d.imports.filter(i => resolveModule(i.module, fileKeys)).map(i=>shortName(resolveModule(i.module,fileKeys)||'')).filter(Boolean);
+      const uniqueImports = [...new Set(importsFrom)].slice(0,4);
+
+      card.innerHTML = `
+        <div class="fn-name" style="color:${col}">${shortName(k)}</div>
+        <div class="fn-path">${k}</div>
+        <div class="fn-syms">
+          ${classes.map(c=>`<span class="fn-sym-tag" style="background:${col}22;color:${col}">⬡ ${c.name}</span>`).join('')}
+          ${asyncFns.map(f=>`<span class="fn-sym-tag" style="background:#22e5ee18;color:#22e5ee">⚡ ${f.name}</span>`).join('')}
+          ${fns.filter(f=>!f.is_async&&!f.is_private).slice(0,3).map(f=>`<span class="fn-sym-tag" style="background:#4dffa018;color:#4dffa0">fn ${f.name}</span>`).join('')}
+          ${d.lines?`<span class="fn-sym-tag" style="background:#ffffff08;color:var(--muted)">${d.lines}L</span>`:''}
+        </div>
+        ${uniqueImports.length?`<div style="margin-top:6px;font-size:9px;color:var(--muted)">uses: ${uniqueImports.join(', ')}</div>`:''}`;
+      nodesWrap.appendChild(card);
+    });
+
+    strip.appendChild(nodesWrap);
+    root.appendChild(strip);
+
+    // connector arrow between lanes (not after last)
+    if (li < activeLayers.length - 1) {
+      const conn = document.createElement('div');
+      conn.className = 'lane-connector';
+
+      // Count edges between this layer and next
+      const nextLayer = activeLayers[li+1];
+      const thisFiles = new Set(files);
+      const nextFiles = new Set(groups[nextLayer]);
+      const crossEdgeCount = edges.filter(e => {
+        const s=e.source.id||e.source, t=e.target.id||e.target;
+        return (thisFiles.has(s)&&nextFiles.has(t)) || (nextFiles.has(s)&&thisFiles.has(t));
+      }).length;
+
+      conn.innerHTML = `
+        <span class="lane-connector-label">${crossEdgeCount || ''}${crossEdgeCount?` connection${crossEdgeCount>1?'s':''}`:LAYER_LABEL[nextLayer]}</span>
+        <div class="lane-connector-arrow"></div>`;
+      root.appendChild(conn);
+    }
+  });
+
+  // Summary footer
+  const footer = document.createElement('div');
+  footer.style.cssText = 'text-align:center;margin-top:32px;font-size:12px;color:var(--muted)';
+  footer.innerHTML = `${fileKeys.length} files &nbsp;·&nbsp; ${edges.length} import connections &nbsp;·&nbsp; ${totalFn} functions &nbsp;·&nbsp; ${totalCls} classes`;
+  root.appendChild(footer);
+}
+
+function showFlowTT(e, key, d, col) {
+  const tt   = document.getElementById('tt');
+  const syms = d.symbols||[];
+  const inC  = edges.filter(ed=>(ed.target.id||ed.target)===key).length;
+  const outC = edges.filter(ed=>(ed.source.id||ed.source)===key).length;
+
+  const rows = syms.map(s => {
+    if (s.kind==='class') {
+      const mths = (s.methods||[]).map(m=>`
+        <div class="tt-sym" style="padding-left:22px">
+          <span class="tt-sym-name" style="color:var(--muted)">↳ ${m.name}</span>
+          ${m.is_async?'<span class="badge b-async">async</span>':''}
+          ${m.is_private?'<span class="badge b-priv">priv</span>':''}
+        </div>`).join('');
+      return `<div class="tt-sym"><span class="badge b-cls">class</span><span class="tt-sym-name">${s.name}</span></div>${mths}`;
+    }
+    return `<div class="tt-sym">
+      <span class="badge ${s.is_async?'b-async':'b-fn'}">${s.is_async?'async':'fn'}</span>
+      <span class="tt-sym-name">${s.name}</span>
+      ${s.is_private?'<span class="badge b-priv">priv</span>':''}
+    </div>`;
+  }).join('');
+
+  tt.innerHTML = `
+    <h4 style="color:${col}">${shortName(key)}</h4>
+    <div class="tt-path">${key}</div>
+    <div class="tt-meta">
+      <span>⬅ ${inC} imported by</span>
+      <span>➡ ${outC} imports</span>
+      ${d.lines?`<span>📄 ${d.lines} lines</span>`:''}
+    </div>
+    ${syms.length?'<div class="tt-sym-list">'+rows+'</div>':'<div style="font-size:11px;color:var(--muted)">No symbols</div>'}`;
+  tt.style.display = 'block';
+  moveTT(e);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TAB SWITCH
+// ════════════════════════════════════════════════════════════════════════════
+function switchTab(t) {
+  ['graph','flow'].forEach(id => {
+    document.getElementById('tab-'+id).classList.toggle('active', id===t);
+    document.getElementById(id+'-panel').classList.toggle('active', id===t);
+  });
+  if (t==='flow' && !flowBuilt) { buildFlowchart(); flowBuilt=true; }
+}
+</script>
+</body>
+</html>
